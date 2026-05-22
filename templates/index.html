@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>NAAC Virtual Assistant</title>
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <!-- Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Poppins&display=swap" rel="stylesheet">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <style>
+        /* Video Styling */
+        .video-container {
+            position: relative;
+            display: inline-block;
+            margin-top: 10px;
+        }
+
+        .video-container video {
+            border-radius: 10px;
+        }
+
+        .play-btn {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 28px;
+            background: rgba(0,0,0,0.6);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            padding: 12px 16px;
+            cursor: pointer;
+        }
+
+        .play-btn:hover {
+            background: rgba(0,0,0,0.8);
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- ================= SIDEBAR ================= -->
+    <div class="sidebar">
+
+        <h2>🤖 NAAC Bot</h2>
+
+        <!-- New Chat -->
+        <button onclick="newChat()">➕ New Chat</button>
+
+        <!-- Institution Type -->
+        <div class="type-selector">
+            <p>Institution Type</p>
+
+            <div class="type-options">
+               
+
+                <div class="type-card active" onclick="selectType('autonomous', this)">
+                    Autonomous
+                </div>
+
+                <div class="type-card" onclick="selectType('university', this)">
+                    University
+                </div>
+                 <div class="type-card active" onclick="selectType('affiliated', this)">
+                    Affiliated
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat History -->
+        <div id="chat-history" class="chat-history"></div>
+
+    </div>
+
+    <!-- ================= CHAT AREA ================= -->
+    <div class="chat-area">
+
+        <!-- Header -->
+        <div class="chat-header">
+            <h2>NAAC Virtual Assistant</h2>
+            <p>Ask anything about NAAC</p>
+        </div>
+
+        <!-- Messages -->
+        <div id="chat-box" class="chat-box"></div>
+
+        <!-- Input -->
+        <div class="input-area">
+            <input type="text" id="userInput" placeholder="Ask your NAAC question...">
+            <button onclick="sendMessage()">➤</button>
+        </div>
+
+    </div>
+
+</div>
+
+<!-- ================= SCRIPT ================= -->
+<script>
+let selectedType = "autonomous";
+
+/* Select Institution Type */
+function selectType(type, element) {
+    selectedType = type;
+
+    document.querySelectorAll(".type-card").forEach(card => {
+        card.classList.remove("active");
+    });
+
+    element.classList.add("active");
+}
+
+/* New Chat */
+function newChat() {
+    document.getElementById("chat-box").innerHTML = "";
+}
+
+/* Send Message */
+function sendMessage() {
+    const input = document.getElementById("userInput");
+    const message = input.value.trim();
+
+    if (message === "") return;
+
+    const chatBox = document.getElementById("chat-box");
+
+    // User message
+    chatBox.innerHTML += `
+        <div class="user">
+            <div>${message}</div>
+        </div>
+    `;
+
+    saveToHistory(message);
+
+    fetch("http://127.0.0.1:5000/chat", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            message: message,
+            type: selectedType
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        chatBox.innerHTML += `
+            <div class="bot">
+                <div>${data.bot_response}</div>
+            </div>
+        `;
+
+        // 🎬 Activate play buttons
+        setTimeout(() => {
+            document.querySelectorAll(".play-btn").forEach(btn => {
+                btn.addEventListener("click", function () {
+                    const videoId = this.getAttribute("data-video");
+                    const video = document.getElementById(videoId);
+
+                    if (video) {
+                        video.play();
+                        this.style.display = "none";
+                    }
+                });
+            });
+        }, 100);
+
+        chatBox.scrollTop = chatBox.scrollHeight;
+    })
+    .catch(() => {
+        chatBox.innerHTML += `
+            <div class="bot">
+                <div>⚠️ Backend not running</div>
+            </div>
+        `;
+    });
+
+    input.value = "";
+}
+
+/* Enter key */
+document.getElementById("userInput")
+.addEventListener("keypress", function(e) {
+    if (e.key === "Enter") {
+        sendMessage();
+    }
+});
+
+/* Save Chat History */
+function saveToHistory(message) {
+    const historyBox = document.getElementById("chat-history");
+
+    const item = document.createElement("div");
+    item.innerText = message.substring(0, 20) + "...";
+
+    item.onclick = () => {
+        document.getElementById("userInput").value = message;
+    };
+
+    historyBox.prepend(item);
+}
+</script>
+
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
