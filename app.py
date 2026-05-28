@@ -34,23 +34,40 @@ def get_db_connection():
 # NORMALIZE TEXT
 # -----------------------------
 def normalize(text):
+
     text = str(text or "")
     text = text.lower()
+
+    # Convert different NAAC formats
+    text = text.replace("n.a.a.c", "naac")
+    text = text.replace("n a a c", "naac")
+    text = text.replace("na.ac", "naac")
+    text = text.replace("na ac", "naac")
+
+    # Remove special symbols
     text = re.sub(r"[^\w\s]", "", text)
+
+    # Remove extra spaces
+    text = re.sub(r"\s+", " ", text)
+
     return text.strip()
 
 # -----------------------------
 # CATEGORY DETECTION
 # -----------------------------
 def detect_category(text):
-    text = text.lower()
+
+    text = normalize(text)
 
     if "university" in text:
         return "university"
+
     elif "autonomous" in text:
         return "autonomous"
+
     elif "affiliated" in text:
         return "affiliated"
+
     else:
         return "general"
 
@@ -58,9 +75,13 @@ def detect_category(text):
 # LOAD DATA (ON START)
 # -----------------------------
 def load_data():
-    global DATA_CACHE, VECTORIZER, QUESTION_VECTORS
+
+    global DATA_CACHE
+    global VECTORIZER
+    global QUESTION_VECTORS
 
     try:
+
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
 
@@ -74,40 +95,55 @@ def load_data():
         cursor.close()
         conn.close()
 
-        DATA_CACHE = [{
-            "question": row["question"],
-            "answer": row["answer"],
-            "institution": (row["institution"] or "general").lower(),
-            "file_path": row["file_path"],
-            "video_link": row["video_link"]
-        } for row in rows]
+        DATA_CACHE = []
 
-        # Build TF-IDF model
+        for row in rows:
+
+            DATA_CACHE.append({
+                "question": normalize(row["question"]),
+                "answer": row["answer"],
+                "institution": (row["institution"] or "general").lower(),
+                "file_path": row["file_path"],
+                "video_link": row["video_link"]
+            })
+
+        # TF-IDF Training
         corpus = [item["question"] for item in DATA_CACHE]
 
         VECTORIZER = TfidfVectorizer()
         QUESTION_VECTORS = VECTORIZER.fit_transform(corpus)
 
-        print("✅ Data loaded:", len(DATA_CACHE))
+        print("✅ Data loaded successfully")
+        print("✅ Total Questions:", len(DATA_CACHE))
 
     except Exception as e:
-        print("❌ DB ERROR:", e)
+        print("❌ DATABASE ERROR:", e)
 
 # -----------------------------
 # SEMANTIC SEARCH
 # -----------------------------
 def semantic_search(user_input, filtered_data):
+
     if not filtered_data:
         return None, 0
 
     try:
+
+        # Normalize user question
+        user_input = normalize(user_input)
+
+        # Convert input into vector
         user_vector = VECTORIZER.transform([user_input])
 
+        # Get vectors of filtered data
         indices = [DATA_CACHE.index(item) for item in filtered_data]
+
         vectors = QUESTION_VECTORS[indices]
 
+        # Similarity
         similarities = cosine_similarity(user_vector, vectors)[0]
 
+        # Best result
         best_index = similarities.argmax()
         best_score = similarities[best_index]
 
@@ -121,16 +157,25 @@ def semantic_search(user_input, filtered_data):
 # BUILD RESPONSE
 # -----------------------------
 def build_response(item, score):
+
     response = item["answer"]
 
-    # PDF
+    # PDF LINK
     if item.get("file_path"):
-        response += f"<br><a href='/{item['file_path']}' target='_blank'>📄 View PDF</a>"
 
-    # VIDEO
-    if item.get("video_link"):
         response += f"""
         <br><br>
+        <a href='/{item["file_path"]}' target='_blank'>
+        📄 View PDF
+        </a>
+        """
+
+    # VIDEO LINK
+    if item.get("video_link"):
+
+        response += f"""
+        <br><br>
+
         <video width="350" controls>
             <source src="/{item['video_link']}" type="video/mp4">
         </video>
@@ -138,7 +183,7 @@ def build_response(item, score):
 
     return jsonify({
         "bot_response": response,
-        "score": round(score, 2),
+        "score": round(float(score), 2),
         "source": "database"
     })
 
@@ -147,56 +192,80 @@ def build_response(item, score):
 # -----------------------------
 @app.route("/chat", methods=["POST"])
 def chat():
+
     try:
+
         data = request.get_json()
 
         user_input = data.get("message", "").strip()
         institution_type = data.get("type", "general").lower()
 
+        # Empty question
         if not user_input:
-            return jsonify({"bot_response": "Please enter a question."})
 
-        print("\nUser:", user_input)
+            return jsonify({
+                "bot_response": "Please enter a question."
+            })
 
-        # CATEGORY CHECK
+        print("\n--------------------------------")
+        print("USER QUESTION:", user_input)
+
+        # Detect category
         detected = detect_category(user_input)
 
+        print("Detected Category:", detected)
+
+        # Category validation
         if detected != "general" and detected != institution_type:
+
             return jsonify({
-                "bot_response": f"Category mismatch: {detected} vs {institution_type}",
+                "bot_response":
+                f"This question belongs to '{detected}' category, but you selected '{institution_type}'.",
                 "score": 0
             })
 
-        # FILTER DATA
-        filtered = [
+        # Filter data
+        filtered_data = [
+
             item for item in DATA_CACHE
+
             if item["institution"] == institution_type
         ]
 
-        if not filtered:
+        # No records
+        if not filtered_data:
+
             return jsonify({
-                "bot_response": "No data available for this category.",
+                "bot_response":
+                "No data available for this institution type.",
                 "score": 0
             })
 
-        # SEARCH
-        best_match, best_score = semantic_search(user_input, filtered)
+        # Search answer
+        best_match, best_score = semantic_search(
+            user_input,
+            filtered_data
+        )
 
         print("Best Score:", best_score)
 
-        # RETURN ONLY DB ANSWER
+        # Threshold
         if best_match and best_score > 0.30:
+
             return build_response(best_match, best_score)
 
-        # NO MATCH
+        # No answer found
         return jsonify({
-            "bot_response": "Answer not found in database. Please refine your question.",
-            "score": round(best_score, 2),
+            "bot_response":
+            "Answer not found in database. Please refine your question.",
+            "score": round(float(best_score), 2),
             "source": "no-ai"
         })
 
     except Exception as e:
-        print("🔥 ERROR:", e)
+
+        print("🔥 SERVER ERROR:", e)
+
         return jsonify({
             "bot_response": "Server error occurred.",
             "score": 0
@@ -207,11 +276,18 @@ def chat():
 # -----------------------------
 @app.route("/")
 def home():
+
     return render_template("index.html")
 
 # -----------------------------
-# RUN
+# RUN APP
 # -----------------------------
 if __name__ == "__main__":
+
     load_data()
-    app.run(debug=True)
+
+    app.run(
+        debug=True,
+        host="0.0.0.0",
+        port=5000
+    )
